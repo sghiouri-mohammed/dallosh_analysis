@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "microservices/auto_processing_datasets"
+		},
+		{
+			"path": "backend"
+		},
+		{
+			"path": "frontend"
+		}
+	],
+	"settings": {
+	}
+}

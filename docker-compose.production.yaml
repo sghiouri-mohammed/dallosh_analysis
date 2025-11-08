@@ -1,0 +1,200 @@
+# Production deployment
+
+services:
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.5
+    container_name: traefik
+    command:
+      - "--api.insecure=true"                          # Enables web dashboard (optional, use in dev only)
+      - "--providers.docker=true"                      # Enable Docker provider for service discovery
+      - "--providers.docker.exposedbydefault=false"   # Only expose containers with traefik.enable=true label
+      - "--entrypoints.web.address=:8080"              # Listen on port 8080 to avoid conflict with app panel on port 80
+      - "--log.level=INFO"
+    ports:
+      - "8080:8080"     # Traefik dashboard (optional)
+      # Notice no 80:80 binding - your other panel uses port 80
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      - dallosh_network
+    restart: unless-stopped
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: dallosh_rabbitmq
+    hostname: rabbitmq
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    volumes:
+      - rabbitmq/data:/var/lib/rabbitmq
+    networks:
+      - dallosh_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # MongoDB Database
+  mongodb:
+    image: mongo:7
+    container_name: dallosh_mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+    volumes:
+      - mongodb/data:/data/db
+      - mongodb/config:/data/configdb
+    networks:
+      - dallosh_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Ollama LLM Server
+  ollama:
+    image: ollama/ollama:latest
+    container_name: dallosh_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - models/ollama:/root/.ollama
+    networks:
+      - dallosh_network
+    command: >
+      sh -c "ollama serve & 
+             sleep 5 && 
+             ollama pull llama3.2:1b && 
+             wait"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Celery Worker for Microservice
+  microservice_celery_worker:
+    build:
+      context: ./microservices/auto_processing_datasets
+      dockerfile: Dockerfile
+    container_name: dallosh_celery_worker
+    command: celery -A src.celery_app:celery_app worker --loglevel=info --queues=celery_processing_queue --pool=solo --concurrency=1
+    env_file:
+      - ./microservices/auto_processing_datasets/.env.production
+    volumes:
+      - ./storage:/project/storage
+      - ./microservices/auto_processing_datasets/logs:/project/microservices/auto_processing_datasets/logs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - dallosh_network
+    restart: unless-stopped
+
+  # Celery Event Listener for Microservice
+  microservice_celery_listener:
+    build:
+      context: ./microservices/auto_processing_datasets
+      dockerfile: Dockerfile
+    container_name: dallosh_celery_listener
+    command: python main.py
+    env_file:
+      - ./microservices/auto_processing_datasets/.env.production
+    volumes:
+      - ./storage:/project/storage
+      - ./microservices/auto_processing_datasets/logs:/project/microservices/auto_processing_datasets/logs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      microservice_celery_worker:
+        condition: service_started
+    networks:
+      - dallosh_network
+    restart: unless-stopped
+
+  # Backend API Server
+  dallosh_analysis_server:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dallosh_backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=Host(`dallosh-analysis-server.agglomy.com`)"
+      - "traefik.http.routers.backend.entrypoints=web"
+      - "traefik.http.services.backend.loadbalancer.server.port=5006"
+    env_file:
+      - ./backend/.env.production
+    volumes:
+      - ./storage:/project/storage
+      - ./backend/logs:/project/backend/logs
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - dallosh_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # Frontend Next.js Client
+  dallosh_analysis_client:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dallosh_frontend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`dallosh-analysis-client.agglomy.com`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3006"
+    env_file:
+      - ./frontend/.env.production
+    depends_on:
+      dallosh_analysis_server:
+        condition: service_healthy
+    networks:
+      - dallosh_network
+    restart: unless-stopped
+
+# Named volumes for persistent data
+volumes:
+  rabbitmq_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+  ollama_data:
+    driver: local
+
+# Network for service communication
+networks:
+  dallosh_network:
+    driver: bridge
+
