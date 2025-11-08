@@ -21,7 +21,7 @@ jobs:
     - name: Deploy to VPS with docker-compose
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_SSH_USER }}@your-vps << 'EOF'
-          cd /path/to/your/app
+          cd ./projects/web/dallosh_analysis
           git pull origin main
           docker-compose build
           docker-compose up -d --remove-orphans

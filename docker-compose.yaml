@@ -13,7 +13,7 @@ services:
       RABBITMQ_DEFAULT_USER: admin
       RABBITMQ_DEFAULT_PASS: admin123
     volumes:
-      - rabbitmq/data:/var/lib/rabbitmq
+      - ./rabbitmq/data:/var/lib/rabbitmq
     networks:
       - dallosh_network
     healthcheck:
@@ -33,8 +33,8 @@ services:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
     volumes:
-      - mongodb/data:/data/db
-      - mongodb/config:/data/configdb
+      - ./mongodb/data:/data/db
+      - ./mongodb/config:/data/configdb
     networks:
       - dallosh_network
     healthcheck:
@@ -51,7 +51,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - models/ollama:/root/.ollama
+      - ./models/ollama:/root/.ollama
     networks:
       - dallosh_network
     command: >

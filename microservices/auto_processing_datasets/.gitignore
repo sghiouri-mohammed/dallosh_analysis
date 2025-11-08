@@ -31,6 +31,8 @@ logs/*.log
 .env.production
 .env.local
 .env.*.local
+!.env.example
+!.env.production.example
 
 # OS
 .DS_Store
