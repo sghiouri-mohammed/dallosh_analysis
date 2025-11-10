@@ -16,4 +16,7 @@ storage/*
 docs/project
 _project
 models/*
+mongodb/data/*
+mongodb/config/*
+rabbitmq/data/*
 
