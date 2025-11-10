@@ -1,22 +1,19 @@
 # Multi-stage build for Dallosh Analysis Frontend
 # Using Node.js runtime (Next.js official support)
-# Node.js is more stable and compatible than Bun for Next.js applications
+# Optimized for faster builds with BuildKit cache mounts
 FROM node:20-alpine AS base
 WORKDIR /project/frontend
 
-# Install dependencies stage
+# Install dependencies stage with BuildKit cache mount
 FROM base AS install
-# Copy package files
 COPY package.json ./
-# Install all dependencies (needed for build)
-# Using --legacy-peer-deps to handle React 19 peer dependency warnings
-RUN npm install --legacy-peer-deps
+# Use BuildKit cache mount to speed up npm install on subsequent builds
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --legacy-peer-deps
 
 # Build stage
 FROM base AS prerelease
-# Copy node_modules from install stage
 COPY --from=install /project/frontend/node_modules ./node_modules
-# Copy all project files
 COPY . .
 
 # Build Next.js application
@@ -24,25 +21,28 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-# Production stage
-FROM base AS release
-# Copy package.json for production dependencies
-COPY package.json ./
+# Production stage - use minimal Node.js image
+FROM node:20-alpine AS release
+WORKDIR /project/frontend
 
-# Install only production dependencies
-RUN npm install --only=production --legacy-peer-deps && \
-    npm cache clean --force
-
-# Copy built application from prerelease stage
-COPY --from=prerelease /project/frontend/public ./public
-COPY --from=prerelease /project/frontend/.next ./.next
-
-# Create non-root user (Next.js recommended user)
+# Create non-root user FIRST (before copying files)
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nextjs -u 1001
 
-# Set correct permissions
-RUN chown -R nextjs:nodejs /project/frontend
+# Copy package.json and install only production dependencies as root
+COPY package.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --only=production --legacy-peer-deps && \
+    npm cache clean --force
+
+# Copy built application (as root, then chown only specific dirs)
+COPY --from=prerelease /project/frontend/public ./public
+COPY --from=prerelease /project/frontend/.next ./.next
+
+# Change ownership of only necessary directories (not entire node_modules)
+# This is much faster than chowning everything
+RUN chown -R nextjs:nodejs /project/frontend/.next /project/frontend/public && \
+    chown nextjs:nodejs /project/frontend
 
 # Switch to non-root user
 USER nextjs
