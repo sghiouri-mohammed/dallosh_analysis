@@ -47,7 +47,7 @@ More details for the diagram here: [Architecture](./docs/architecture.md "Go To 
 
 ### Architecture Overview
 
-The system is organized into three main layers:
+The system is organized into three main layers as follow:
 
 **Frontend Layer:**
 

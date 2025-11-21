@@ -11,6 +11,7 @@ jest.mock('@/services/client', () => ({
     post: jest.fn(),
     get: jest.fn(),
     delete: jest.fn(),
+    getInstance: jest.fn(),
   },
 }));
 
@@ -23,7 +24,7 @@ describe('FilesService', () => {
 
   describe('upload', () => {
     it('should upload a file successfully', async () => {
-      const mockFile = new File(['test content'], 'test.csv', { type: 'text/csv' });
+      const file = new File(['test content'], 'test.csv', { type: 'text/csv' });
       const mockResponse = {
         success: true,
         data: {
@@ -31,6 +32,8 @@ describe('FilesService', () => {
           data: {
             filename: 'test.csv',
             size: 1024,
+            file_path: '/path/to/file.csv',
+            extension: '.csv',
             type: 'text/csv',
           },
         },
@@ -39,28 +42,65 @@ describe('FilesService', () => {
 
       mockedApiClient.post.mockResolvedValue(mockResponse);
 
-      const result = await filesService.upload(mockFile);
+      const result = await filesService.upload(file);
 
-      expect(mockedApiClient.post).toHaveBeenCalled();
+      expect(mockedApiClient.post).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(FormData),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'Content-Type': 'multipart/form-data',
+          }),
+        })
+      );
       expect(result).toEqual(mockResponse.data);
     });
 
-    it('should handle upload errors', async () => {
-      const mockFile = new File(['test'], 'test.csv');
-      mockedApiClient.post.mockRejectedValue(new Error('Upload failed'));
+    it('should upload a Blob with filename', async () => {
+      const blob = new Blob(['test content'], { type: 'text/csv' });
+      const filename = 'test.csv';
 
-      await expect(filesService.upload(mockFile)).rejects.toThrow('Upload failed');
+      const mockResponse = {
+        success: true,
+        data: {
+          uid: 'file-123',
+          data: {
+            filename,
+            size: 1024,
+            file_path: '/path/to/file.csv',
+            extension: '.csv',
+            type: 'text/csv',
+          },
+        },
+        message: 'File uploaded',
+      };
+
+      mockedApiClient.post.mockResolvedValue(mockResponse);
+
+      await filesService.upload(blob, filename);
+
+      expect(mockedApiClient.post).toHaveBeenCalled();
     });
   });
 
   describe('findAll', () => {
-    it('should fetch all files', async () => {
+    it('should get all files', async () => {
+      const mockFiles = [
+        {
+          uid: 'file-1',
+          data: {
+            filename: 'file1.csv',
+            size: 1024,
+            file_path: '/path/to/file1.csv',
+            extension: '.csv',
+            type: 'text/csv',
+          },
+        },
+      ];
+
       const mockResponse = {
         success: true,
-        data: [
-          { uid: 'file-1', data: { filename: 'file1.csv' } },
-          { uid: 'file-2', data: { filename: 'file2.csv' } },
-        ],
+        data: mockFiles,
         message: 'Files retrieved',
       };
 
@@ -69,66 +109,193 @@ describe('FilesService', () => {
       const result = await filesService.findAll();
 
       expect(mockedApiClient.get).toHaveBeenCalled();
-      expect(result).toEqual(mockResponse.data);
+      expect(result).toEqual(mockFiles);
+    });
+
+    it('should get files with filter and options', async () => {
+      const filter = { 'data.extension': '.csv' };
+      const options = { limit: 10, skip: 0 };
+
+      mockedApiClient.get.mockResolvedValue({
+        success: true,
+        data: [],
+        message: 'Files retrieved',
+      });
+
+      await filesService.findAll(filter, options);
+
+      expect(mockedApiClient.get).toHaveBeenCalledWith(
+        expect.stringContaining('filter=')
+      );
     });
   });
 
   describe('findOne', () => {
-    it('should fetch a single file by ID', async () => {
-      const fileId = 'file-123';
+    it('should get file by id', async () => {
+      const uid = 'file-123';
+      const mockFile = {
+        uid,
+        data: {
+          filename: 'test.csv',
+          size: 1024,
+          file_path: '/path/to/file.csv',
+          extension: '.csv',
+          type: 'text/csv',
+        },
+      };
+
       const mockResponse = {
         success: true,
-        data: {
-          uid: fileId,
-          data: { filename: 'test.csv' },
-        },
+        data: mockFile,
         message: 'File retrieved',
       };
 
       mockedApiClient.get.mockResolvedValue(mockResponse);
 
-      const result = await filesService.findOne(fileId);
+      const result = await filesService.findOne(uid);
 
-      expect(mockedApiClient.get).toHaveBeenCalledWith(`/files/${fileId}`);
-      expect(result).toEqual(mockResponse.data);
-    });
-  });
-
-  describe('delete', () => {
-    it('should delete a file', async () => {
-      const fileId = 'file-123';
-      const mockResponse = {
-        success: true,
-        data: null,
-        message: 'File deleted',
-      };
-
-      mockedApiClient.delete.mockResolvedValue(mockResponse);
-
-      await filesService.delete(fileId);
-
-      expect(mockedApiClient.delete).toHaveBeenCalledWith(`/files/${fileId}`);
+      expect(mockedApiClient.get).toHaveBeenCalledWith(
+        expect.stringContaining(uid)
+      );
+      expect(result).toEqual(mockFile);
     });
   });
 
   describe('download', () => {
-    it('should download a file', async () => {
-      const fileId = 'file-123';
-      const source = 'datasets';
-      const contentDisposition = 'attachment';
+    it('should download file as blob', async () => {
+      const uid = 'file-123';
+      const source = 'analysed';
+      const mockBlob = new Blob(['test content'], { type: 'text/csv' });
 
-      mockedApiClient.get.mockResolvedValue({} as any);
+      const mockAxiosInstance = {
+        get: jest.fn().mockResolvedValue({
+          data: mockBlob,
+        }),
+      };
 
-      await filesService.download(fileId, source, contentDisposition);
+      mockedApiClient.getInstance.mockReturnValue(mockAxiosInstance as any);
 
-      expect(mockedApiClient.get).toHaveBeenCalledWith(
-        `/files/${fileId}/download`,
-        {
-          params: { source, contentDisposition },
+      const result = await filesService.download(uid, source);
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
+        expect.stringContaining(uid),
+        expect.objectContaining({
           responseType: 'blob',
-        }
+        })
+      );
+      expect(result).toBe(mockBlob);
+    });
+
+    it('should use default source if not provided', async () => {
+      const uid = 'file-123';
+      const mockBlob = new Blob(['test content']);
+
+      const mockAxiosInstance = {
+        get: jest.fn().mockResolvedValue({
+          data: mockBlob,
+        }),
+      };
+
+      mockedApiClient.getInstance.mockReturnValue(mockAxiosInstance as any);
+
+      await filesService.download(uid);
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
+        expect.stringContaining('source=analysed'),
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe('getDownloadUrl', () => {
+    it('should create object URL for inline display', async () => {
+      const uid = 'file-123';
+      const mockBlob = new Blob(['test content']);
+
+      const mockAxiosInstance = {
+        get: jest.fn().mockResolvedValue({
+          data: mockBlob,
+        }),
+      };
+
+      mockedApiClient.getInstance.mockReturnValue(mockAxiosInstance as any);
+
+      // Mock URL.createObjectURL
+      const mockUrl = 'blob:http://localhost/test';
+      global.URL.createObjectURL = jest.fn().mockReturnValue(mockUrl);
+
+      const result = await filesService.getDownloadUrl(uid);
+
+      expect(result).toBe(mockUrl);
+      expect(global.URL.createObjectURL).toHaveBeenCalledWith(mockBlob);
+    });
+  });
+
+  describe('downloadFile', () => {
+    it('should trigger browser download', async () => {
+      const uid = 'file-123';
+      const mockBlob = new Blob(['test content']);
+
+      const mockAxiosInstance = {
+        get: jest.fn().mockResolvedValue({
+          data: mockBlob,
+        }),
+      };
+
+      mockedApiClient.getInstance.mockReturnValue(mockAxiosInstance as any);
+
+      // Mock DOM methods
+      const mockLink = {
+        href: '',
+        download: '',
+        click: jest.fn(),
+      };
+
+      global.URL.createObjectURL = jest.fn().mockReturnValue('blob:test');
+      global.URL.revokeObjectURL = jest.fn();
+      document.createElement = jest.fn().mockReturnValue(mockLink as any);
+      document.body.appendChild = jest.fn();
+      document.body.removeChild = jest.fn();
+
+      await filesService.downloadFile(uid);
+
+      expect(mockLink.click).toHaveBeenCalled();
+      expect(global.URL.revokeObjectURL).toHaveBeenCalled();
+    });
+  });
+
+  describe('delete', () => {
+    it('should delete file', async () => {
+      const uid = 'file-123';
+
+      mockedApiClient.delete.mockResolvedValue({
+        success: true,
+        data: null,
+        message: 'File deleted',
+      });
+
+      await filesService.delete(uid);
+
+      expect(mockedApiClient.delete).toHaveBeenCalledWith(
+        expect.stringContaining(uid)
+      );
+    });
+
+    it('should delete file with source parameter', async () => {
+      const uid = 'file-123';
+      const source = 'analysed';
+
+      mockedApiClient.delete.mockResolvedValue({
+        success: true,
+        data: null,
+        message: 'File deleted',
+      });
+
+      await filesService.delete(uid, source);
+
+      expect(mockedApiClient.delete).toHaveBeenCalledWith(
+        expect.stringContaining('source=analysed')
       );
     });
   });
 });
-

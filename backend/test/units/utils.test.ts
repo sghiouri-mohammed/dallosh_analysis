@@ -1,6 +1,33 @@
-import { generateUID, signToken, verifyToken, hashPassword, comparePassword, JWTPayload } from '@utils';
+import {
+  generateUID,
+  signToken,
+  verifyToken,
+  hashPassword,
+  comparePassword,
+  JWTPayload,
+} from '@utils';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { env } from '@configs/env';
+
+// Mock dependencies
+jest.mock('jsonwebtoken');
+jest.mock('bcryptjs');
+jest.mock('@configs/env', () => ({
+  env: {
+    JWT_SECRET: 'test-secret',
+    JWT_EXPIRES_IN: '7d',
+  },
+}));
+
+const mockedJwt = jwt as jest.Mocked<typeof jwt>;
+const mockedBcrypt = bcrypt as jest.Mocked<typeof bcrypt>;
 
 describe('Utils', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   describe('generateUID', () => {
     it('should generate a unique ID', () => {
       const uid1 = generateUID();
@@ -13,122 +40,151 @@ describe('Utils', () => {
       expect(uid1.length).toBeGreaterThan(0);
     });
 
-    it('should generate valid UUID format', () => {
+    it('should generate UUID v4 format', () => {
       const uid = generateUID();
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      expect(uuidRegex.test(uid)).toBe(true);
+      // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(uid).toMatch(uuidRegex);
     });
   });
 
   describe('signToken', () => {
-    it('should sign a JWT token with payload', () => {
+    it('should sign a JWT token', () => {
       const payload: JWTPayload = {
-        uid: 'test-uid',
+        uid: 'user-123',
         email: 'test@example.com',
         roleId: 'role-123',
       };
 
+      const expectedToken = 'signed-token';
+      mockedJwt.sign.mockReturnValue(expectedToken as any);
+
       const token = signToken(payload);
 
-      expect(token).toBeDefined();
-      expect(typeof token).toBe('string');
-      expect(token.split('.')).toHaveLength(3); // JWT has 3 parts
+      expect(mockedJwt.sign).toHaveBeenCalledWith(
+        payload,
+        env.JWT_SECRET,
+        { expiresIn: env.JWT_EXPIRES_IN }
+      );
+      expect(token).toBe(expectedToken);
     });
 
     it('should sign token without roleId', () => {
       const payload: JWTPayload = {
-        uid: 'test-uid',
+        uid: 'user-123',
         email: 'test@example.com',
       };
 
+      const expectedToken = 'signed-token';
+      mockedJwt.sign.mockReturnValue(expectedToken as any);
+
       const token = signToken(payload);
-      expect(token).toBeDefined();
+
+      expect(token).toBe(expectedToken);
     });
   });
 
   describe('verifyToken', () => {
-    it('should verify a valid token and return payload', () => {
+    it('should verify a valid token', () => {
+      const token = 'valid-token';
       const payload: JWTPayload = {
-        uid: 'test-uid',
+        uid: 'user-123',
         email: 'test@example.com',
         roleId: 'role-123',
       };
 
-      const token = signToken(payload);
-      const decoded = verifyToken(token);
+      mockedJwt.verify.mockReturnValue(payload as any);
 
-      expect(decoded).toBeDefined();
-      expect(decoded.uid).toBe(payload.uid);
-      expect(decoded.email).toBe(payload.email);
-      expect(decoded.roleId).toBe(payload.roleId);
+      const result = verifyToken(token);
+
+      expect(mockedJwt.verify).toHaveBeenCalledWith(token, env.JWT_SECRET);
+      expect(result).toEqual(payload);
     });
 
     it('should throw error for invalid token', () => {
-      const invalidToken = 'invalid.token.here';
+      const token = 'invalid-token';
 
-      expect(() => {
-        verifyToken(invalidToken);
-      }).toThrow('Invalid or expired token');
+      mockedJwt.verify.mockImplementation(() => {
+        throw new Error('Invalid token');
+      });
+
+      expect(() => verifyToken(token)).toThrow('Invalid or expired token');
     });
 
-    it('should throw error for empty token', () => {
-      expect(() => {
-        verifyToken('');
-      }).toThrow();
+    it('should throw error for expired token', () => {
+      const token = 'expired-token';
+
+      mockedJwt.verify.mockImplementation(() => {
+        throw new jwt.TokenExpiredError('Token expired', new Date());
+      });
+
+      expect(() => verifyToken(token)).toThrow('Invalid or expired token');
     });
   });
 
   describe('hashPassword', () => {
     it('should hash a password', async () => {
-      const password = 'testPassword123';
-      const hashed = await hashPassword(password);
+      const password = 'plainPassword123';
+      const hashedPassword = 'hashedPassword123';
+      const salt = 'salt123';
 
-      expect(hashed).toBeDefined();
-      expect(typeof hashed).toBe('string');
-      expect(hashed).not.toBe(password);
-      expect(hashed.length).toBeGreaterThan(0);
+      mockedBcrypt.genSalt.mockResolvedValue(salt as any);
+      mockedBcrypt.hash.mockResolvedValue(hashedPassword as any);
+
+      const result = await hashPassword(password);
+
+      expect(mockedBcrypt.genSalt).toHaveBeenCalledWith(10);
+      expect(mockedBcrypt.hash).toHaveBeenCalledWith(password, salt);
+      expect(result).toBe(hashedPassword);
     });
 
-    it('should produce different hashes for the same password', async () => {
-      const password = 'testPassword123';
-      const hashed1 = await hashPassword(password);
-      const hashed2 = await hashPassword(password);
+    it('should generate different hashes for same password', async () => {
+      const password = 'samePassword';
+      const salt1 = 'salt1';
+      const salt2 = 'salt2';
+      const hash1 = 'hash1';
+      const hash2 = 'hash2';
 
-      // bcrypt includes salt, so hashes should be different
-      expect(hashed1).not.toBe(hashed2);
-    });
+      mockedBcrypt.genSalt
+        .mockResolvedValueOnce(salt1 as any)
+        .mockResolvedValueOnce(salt2 as any);
+      mockedBcrypt.hash
+        .mockResolvedValueOnce(hash1 as any)
+        .mockResolvedValueOnce(hash2 as any);
 
-    it('should hash empty string', async () => {
-      const hashed = await hashPassword('');
-      expect(hashed).toBeDefined();
+      const result1 = await hashPassword(password);
+      const result2 = await hashPassword(password);
+
+      expect(result1).toBe(hash1);
+      expect(result2).toBe(hash2);
+      // Different salts should produce different hashes
+      expect(mockedBcrypt.genSalt).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('comparePassword', () => {
-    it('should return true for matching password and hash', async () => {
-      const password = 'testPassword123';
-      const hashed = await hashPassword(password);
+    it('should return true for matching password', async () => {
+      const password = 'plainPassword123';
+      const hashedPassword = 'hashedPassword123';
 
-      const result = await comparePassword(password, hashed);
+      mockedBcrypt.compare.mockResolvedValue(true as any);
+
+      const result = await comparePassword(password, hashedPassword);
+
+      expect(mockedBcrypt.compare).toHaveBeenCalledWith(password, hashedPassword);
       expect(result).toBe(true);
     });
 
-    it('should return false for non-matching password and hash', async () => {
-      const password = 'testPassword123';
-      const wrongPassword = 'wrongPassword';
-      const hashed = await hashPassword(password);
+    it('should return false for non-matching password', async () => {
+      const password = 'wrongPassword';
+      const hashedPassword = 'hashedPassword123';
 
-      const result = await comparePassword(wrongPassword, hashed);
-      expect(result).toBe(false);
-    });
+      mockedBcrypt.compare.mockResolvedValue(false as any);
 
-    it('should return false for empty password', async () => {
-      const password = 'testPassword123';
-      const hashed = await hashPassword(password);
+      const result = await comparePassword(password, hashedPassword);
 
-      const result = await comparePassword('', hashed);
+      expect(mockedBcrypt.compare).toHaveBeenCalledWith(password, hashedPassword);
       expect(result).toBe(false);
     });
   });
 });
-
