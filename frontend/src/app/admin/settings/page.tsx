@@ -26,6 +26,7 @@ export default function AdminSettingsPage() {
               AI Configuration
             </TabsTrigger>
             <TabsTrigger 
+                // value="storage"
               value="storage"
               className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:font-semibold data-[state=inactive]:text-muted-foreground rounded-none border-b-2 border-transparent px-4 pb-3"
             >
